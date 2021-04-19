@@ -1,0 +1,5 @@
+.ipynb_checkpoints
+data/
+images/
+**.DS_Store
+.env
