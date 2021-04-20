@@ -7,6 +7,7 @@
 
 ## Project Summary
 
+What makes a song so popular that it persists in our cultural consciousness for years to come? We embarked on the task of isolating features and components that distinguish popular songs that make an indelible mark on musical history from those that gain a sizable but ultimately lesser level of renown. To do so, we collected data from the Billboard Year-end Top 100 charts and used Spotify audio features and lyrical content provided by Genius to probe what distinguished the Top Ten from songs that rank lower. We discover that certain acoustic and lyrical features are fairly successful in distinguishing classes of songs from one another, and we are ultimately able to use these features to predict song rankings with moderate accuracy.
 
 ## Files and Folders
 - *[data_scraping.ipynb](data_scraping.ipynb)*
