@@ -1,0 +1,202 @@
+---
+title: "Project-3-Combined"
+author: "Tejit Pabari"
+date: "4/17/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE,
+	class.source="bg-success",
+	class.output="bg-warning"
+)
+
+library(ggplot2)
+library(scales)
+library(glmnet)
+library(jsonlite)
+library(superml)
+library(tidytext)
+library(text2vec)
+library(dplyr)
+library(forcats)
+library(stopwords)
+library(clue)
+library(cluster)
+library(factoextra)
+library(readtext)
+library(tokenizers)
+library(pdist)
+library(readr)
+library(stringr)
+library(ape)
+library(dbscan)
+library(randomForest)
+library(textclean)
+library(caret)
+library(cvms)
+library(Matrix)
+source('plot_cosine_heatmap.R')
+setwd("/Users/tejitpabari/Desktop/DataMining/Projects/3")
+gg_global_theme <- theme(axis.text=element_text(size=16))
+set.seed(2)
+# rm(list = ls())
+```
+
+## Load data
+```{r}
+genius_data <- read_csv("data/genuis_data.csv")
+info_cols <- c("key", "song", "artist", "album_name")
+ranking_cols <- sapply((2006:2020), function(x) paste0("song_ranking_",x))
+feature_cols <- names(genius_data)[13:23]
+feature_cols2 <- c(feature_cols,"song_popularity", "song_duration","song_lyric_valence", "song_lyrics_repetitiveness")
+feature_cols_album <- c(feature_cols2,"album_total_tracks","album_popularity")
+genius_data$max_ranking <- apply(genius_data[,ranking_cols], 1, max)
+genius_data$max_ranking_year <- sapply(ranking_cols[apply(genius_data[,ranking_cols], 1, which.max)], function(x) as.numeric(strsplit(x,"_")[[1]][3]))
+genius_data$ranking_duration <- apply(genius_data[,ranking_cols], 1, function(x) length(x[x!=0]))
+ranking_info_cols = c("max_ranking","max_ranking_year","ranking_duration")
+exclude_cols = c("kmeans", "kmeans2","kmeans_album","clus","max_ranking","ranking_3")
+
+genius_data$ranking_3 <- sapply(genius_data$max_ranking, function(x){
+  if(x<=10){return(1)}
+  if(x<=50){return(2)}
+  return(3)
+})
+```
+
+### Functions
+```{r}
+fname <- function(x) return(str_replace(x,"_"," "))
+run_lm_features <- function(df, y="max_ranking", exclude_cols=NULL, color=NULL,
+                            save_pre=NULL, plot=TRUE){
+  feature_names <- names(df)[!(names(df) %in% c(exclude_cols,color,y))]
+  yn <- fname(y)
+  for(f in feature_names){
+    xn <- fname(f)
+    fig = ggplot(df, aes_string(f, y, color=color)) + geom_point() + 
+      ggtitle(paste0(yn," and ",xn)) + xlab(xn) + ylab(yn)
+    if (plot==TRUE) print(fig)
+    if (!is.null(save_pre)){
+      filename <- paste0(y,"_",f)
+      ggsave(file.path(save_pre,filename))
+    }
+  }
+}
+```
+
+## Data Preprocessing
+```{r}
+preprocess_func_base <- function (org_text){
+  text <- tolower(org_text)
+  return(text)
+}
+preprocess_func_2 <- function (org_text) {
+  text <- replace_contraction(org_text)
+  text <- gsub("[^[:alpha:][:space:]]", "", text)
+  text <- gsub("\\s+", " ", text)
+  text <- preprocess_func_base(text)
+  return(text)
+}
+example_text <- genius_data$song_lyrics[1]
+preprocess_func_2(example_text)
+```
+
+### Processing Data
+```{r}
+genius_data$song_lyrics_pre <- unname(sapply(genius_data$song_lyrics, function(x) preprocess_func_2(x)))
+```
+
+### Train test split 
+Train test split based on max_ranking3, for all columns
+```{r}
+test_split = 0.2
+test_data_inds <- unlist(sapply(1:3, function(x) {
+  inds <- which(genius_data$ranking_3==x)
+  inds_test = round(test_split*length(inds))
+  return(sample(inds, inds_test))
+}))
+test_data <- genius_data[test_data_inds,]
+train_data <- genius_data[-test_data_inds,]
+```
+
+## Feature Analysis
+### TFIDF + Similarity
+### TFIDF + Similarity Prediction
+```{r}
+it = itoken(train_data$song_lyrics_pre, tokenizer = tokenize_words, progressbar = FALSE)
+v = create_vocabulary(it)
+vectorizer = vocab_vectorizer(v)
+dtm = create_dtm(it, vectorizer)
+
+it_test = itoken(test_data$song_lyrics_pre, tokenizer = tokenize_words, progressbar = FALSE)
+dtm_test = create_dtm(it_test, vectorizer)
+
+tfidf = TfIdf$new()
+dtm_tfidf = fit_transform(dtm, tfidf)
+temp_matrix <- as.matrix(dtm_tfidf)
+temp <- cbind(temp_matrix, scale(as.matrix(train_data[,feature_cols2])))
+dtm_tfidf <- as(temp, "dgCMatrix")
+
+dtm_tfidf_test = transform(dtm_test,tfidf)
+temp_matrix <- as.matrix(dtm_tfidf_test)
+temp <- cbind(temp_matrix, scale(as.matrix(test_data[,feature_cols2])))
+dtm_tfidf_test <- as(temp, "dgCMatrix")
+
+tfidf_cos_sim = sim2(x = dtm_tfidf, y=dtm_tfidf_test, method = "cosine", norm = "l2")
+
+temp_df2 <-  split(genius_data$ranking_3, genius_data$key)
+rownames(tfidf_cos_sim) <- train_data$key
+colnames(tfidf_cos_sim) <- test_data$key
+
+# cosine_sim_heatmap <- plot_cosine_heatmap(as.matrix(tfidf_cos_sim), plot_axis_labels = FALSE)
+# ggsave('images/cosine_sim_tfidf_test.png')
+
+# preds <- t(apply(tfidf_cos_sim, 2, function(x) {
+#   srt <- sort(x, decreasing = TRUE)
+#   key <- names(srt)[1]
+#   return(unname(temp_df2[key])[[1]])
+# }))
+
+getmode <- function(v) {
+   uniqv <- unique(v)
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+weight_vector <- function(x, weight1=3, weight2=2, weight3=1){
+  xtab <- table(x)
+  temp <- as.data.frame(table(x))
+  rownames(temp) <- temp$x
+  temp["1",]$Freq <- temp["1",]$Freq*weight1
+  temp["2",]$Freq <- temp["2",]$Freq*weight2
+  temp["3",]$Freq <- temp["3",]$Freq*weight3
+  return(as.numeric(as.character(rownames(temp[order(temp$Freq, decreasing = TRUE),])[1])))
+}
+preds <- t(apply(tfidf_cos_sim, 2, function(x) {
+  srt <- sort(x, decreasing = TRUE)
+  keys <- names(srt)[1:5]
+  ranks <- unname(sapply(keys, function(x) unname(temp_df2[x])[[1]]))
+  # rank_weight <- weight_vector(ranks, weight1=1, weight2=2, weight3=3)
+  rank_mode <- getmode(ranks)
+  return(rank_mode)
+}))
+
+temp <- sapply(rownames(tfidf_cos_sim),function(x)unname(temp_df2[x])[[1]])
+preds <- t(rbind(preds, unname(temp)))
+colnames(preds) <- c("pred_rank", "actual_rank")
+xtab <- table(factor(preds[,'pred_rank']), factor(preds[,'actual_rank']))
+cm <- confusionMatrix(xtab)
+cm
+
+temp_df <- as.data.frame(cm$table)
+colnames(temp_df) <- c("pred_rank", "actual_rank", "n")
+plot_confusion_matrix(temp_df, target_col = "actual_rank",
+                      prediction_col = "pred_rank",
+                      counts_col = "n",
+                      class_order=c("3","2","1"),
+                      add_row_percentages = FALSE,
+                      add_col_percentages = FALSE)
+```
