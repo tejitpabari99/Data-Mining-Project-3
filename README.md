@@ -1,3 +1,5 @@
+<base target="_blank">
+
 # Data-Mining-Project-3
 
 - Project 3 Report on Google Doc can be obtained from
